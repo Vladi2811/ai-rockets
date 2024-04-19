@@ -152,6 +152,9 @@ def main():
 
     TARGET_INITIAL_POSITION = [250, 100]
 
+    TRAIN = True
+
+    FUEL = 200
     # Create target rocket
     initial_target = torch.tensor(
         TARGET_INITIAL_POSITION, dtype=torch.float32).to(device)
@@ -178,21 +181,19 @@ def main():
             initial_objective_distance = calculate_distance_to_target(
                 torch.tensor([ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i]], dtype=torch.float32).to(device), target)
             train_rocket = torch.tensor(
-                [[ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i], ROCKET_VELOCITY, initial_objective_direction, initial_objective_distance, False]], dtype=torch.float32, ).to(device)
-            test_rocket = torch.tensor(
-                [[ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i], ROCKET_VELOCITY, initial_objective_direction, initial_objective_distance, False]], dtype=torch.float32, requires_grad=True).to(device)
+                [[ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i], ROCKET_VELOCITY, initial_objective_direction, initial_objective_distance, False, FUEL]], dtype=torch.float32, ).to(device)
+
             # Append train_rocket to train_rockets
             if i == 0:
                 train_rockets = train_rocket
-                test_rockets = test_rocket
+
             else:
                 train_rockets = torch.cat((train_rockets, train_rocket), 0)
-                test_rockets = torch.cat((test_rockets, test_rocket), 0)
 
         rockets = train_rockets.clone()
         # Set rockets position to the initial position
 
-        while count < 250:
+        while count < FUEL:
             # Execute the model
             # output[0] = turn left, output[1] = turn right, output[2] = do nothing
 
@@ -221,6 +222,8 @@ def main():
                 if rocket[5] < 5:
                     # If the rocket is close to the target, give a reward
                     new_rockets[i, 6] = True
+                new_rockets[i, 7] -= 1
+
             rockets = new_rockets
             # Calculate the desired direction for each rocket
             draw_and_watch_rocket(rockets, target)
@@ -230,22 +233,25 @@ def main():
             rockets = calculate_next_position(rockets, target, device)
             # Calculate the loss
             loss = criterion(outputs, desired_outputs)
-
-            # Zero the gradients
-            optimizer.zero_grad()
-            # Backward pass
-            loss.backward(retain_graph=True)
-            # Optimize
-            weights_before = model.state_dict()
-            optimizer.step()
-            weights_after = model.state_dict()
+            # Punishment for rockets that are out of fuel
+            for i, rocket in enumerate(rockets):
+                if rocket[7] <= 0 and not rocket[6]:
+                    loss += 10
+            if TRAIN:
+                # Zero the gradients
+                optimizer.zero_grad()
+                # Backward pass
+                loss.backward(retain_graph=True)
+                # Optimize
+                optimizer.step()
             count += 1
             print(count)
             # time.sleep(1)
             print(f"Epoch: {epoch}, Loss: {loss.item()}")
         print(f"Epoch: {epoch}, Loss: {loss.item()}")
         # Save the model
-        torch.save(model.state_dict(), "data/model.pth")
+        if TRAIN:
+            torch.save(model.state_dict(), "data/model.pth")
 
 
 main()
