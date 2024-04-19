@@ -110,6 +110,8 @@ def draw_and_watch_rocket(rockets, target):
     canvas = np.zeros((500, 500, 3), dtype=np.uint8)
     # Draw the target as a green circle
     for rocket in rockets:
+        if rocket[6]:
+            continue
         # Draw the rocket as a red circle
         rocket_position = (int(rocket[0].item()), int(rocket[1].item()))
         cv2.circle(canvas, rocket_position, 2, (0, 0, 255), -1)
@@ -152,7 +154,7 @@ def main():
 
     TARGET_INITIAL_POSITION = [250, 100]
 
-    TRAIN = True
+    TRAIN = False
 
     FUEL = 200
     # Create target rocket
