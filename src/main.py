@@ -39,22 +39,29 @@ def add_to_rocket_angle(rockets, angle, device):
     return new_rockets
 
 
-def calculate_next_position(rockets, device):
+def calculate_next_position(rockets, target, device):
+
     new_rockets = rockets.clone()
     positions = []
     angles = []
     objective_directions = []
     objective_distances = []
     for i, rocket in enumerate(rockets):
+        if rocket[6]:
+            positions.append([rocket[0], rocket[1]])
+            angles.append(rocket[2])
+            objective_directions.append(rocket[4])
+            objective_distances.append(0)
+            continue
         new_x = rocket[0] + rocket[3] * torch.cos(new_rockets[i, 2])
         new_y = rocket[1] + rocket[3] * torch.sin(new_rockets[i, 2])
         new_angle = calculate_objective_direction_angle(torch.tensor(
-            [new_x, new_y, rocket[2]], device=device), torch.tensor([150, 100], device=device))
+            [new_x, new_y, rocket[2]], device=device), target)
         positions.append([new_x, new_y])
         angles.append(rocket[2])
         objective_directions.append(new_angle)
         objective_distances.append(
-            calculate_distance_to_target(torch.tensor([new_x, new_y, new_angle], device=device), torch.tensor([150, 100], device=device)))
+            calculate_distance_to_target(torch.tensor([new_x, new_y, new_angle], device=device), target))
 
     new_rockets[:, :2] = torch.tensor(positions, device=device)
     new_rockets[:, 2] = torch.tensor(angles, device=device)
@@ -69,6 +76,9 @@ def calculate_desired_output(rocket, target):
     angle_to_target = calculate_objective_direction_angle(rocket[:3], target)
     # Initialize the desired output as a 3-element vector
     desired_output = torch.zeros(3)
+    if rocket[6]:
+        desired_output[2] = 1
+        return desired_output
 
     # If the angle to the target is positive, the rocket should turn right
     if angle_to_target >= 0:
@@ -83,11 +93,22 @@ def calculate_desired_output(rocket, target):
     return desired_output
 
 
-def draw_and_watch_rocket(rockets):
+def move_target(target, desired_position, speed):
+    delta_x = desired_position[0] - target[0]
+    delta_y = desired_position[1] - target[1]
+
+    angle = torch.atan2(delta_y, delta_x)
+    new_x = target[0] + speed * torch.cos(angle)
+    new_y = target[1] + speed * torch.sin(angle)
+    print(new_x, new_y)
+    return torch.tensor([new_x, new_y])
+
+
+def draw_and_watch_rocket(rockets, target):
+    target_position = (int(target[0].item()), int(target[1].item()))
     # Create a black canvas
     canvas = np.zeros((500, 500, 3), dtype=np.uint8)
     # Draw the target as a green circle
-    target_position = (150, 100)
     for rocket in rockets:
         # Draw the rocket as a red circle
         rocket_position = (int(rocket[0].item()), int(rocket[1].item()))
@@ -110,24 +131,40 @@ def main():
     print("Starting the program...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using {device} device")
-    model = NeuralNetwork().to(device)
+    # Load the model if it exists
+    try:
+        model = NeuralNetwork().to(device)
+        model.load_state_dict(torch.load("data/model.pth"))
+        print("Model loaded")
+    except:
+        model = NeuralNetwork().to(device)
 
-    ROCKET_NUMBERS = 20
+    ROCKET_NUMBERS = 30
 
     ROCKET_POSX_RANGE = [200, 300]
     ROCKET_POSY_RANGE = [390, 410]
-    ROCKET_ANGLE_RANGE = [0, 180]
+    ROCKET_ANGLE_RANGE = [0, 360]
 
-    ROCKET_VELOCITY = 2
+    ROCKET_VELOCITY = 3
+
+    TARGET_MOVEMENT_RANGE_X = [50, 400]
+    TARGET_MOVEMENT_RANGE_Y = [100, 400]
+
+    TARGET_INITIAL_POSITION = [250, 100]
 
     # Create target rocket
-    target = torch.tensor([150, 100], dtype=torch.float32).to(device)
-
+    initial_target = torch.tensor(
+        TARGET_INITIAL_POSITION, dtype=torch.float32).to(device)
     # Create the criterion
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     criterion = torch.nn.CrossEntropyLoss()
-    for epoch in range(100):
+    for epoch in range(70):
         count = 0
+        target = initial_target.clone()
+        random_target_destination = torch.tensor(
+            [torch.randint(TARGET_MOVEMENT_RANGE_X[0], TARGET_MOVEMENT_RANGE_X[1], (1,)),
+             torch.randint(TARGET_MOVEMENT_RANGE_Y[0], TARGET_MOVEMENT_RANGE_Y[1], (1,))],
+            dtype=torch.float32).to(device)
         ROCKET_POSX = torch.randint(
             ROCKET_POSX_RANGE[0], ROCKET_POSX_RANGE[1], (ROCKET_NUMBERS,))
         ROCKET_POSY = torch.randint(
@@ -141,9 +178,9 @@ def main():
             initial_objective_distance = calculate_distance_to_target(
                 torch.tensor([ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i]], dtype=torch.float32).to(device), target)
             train_rocket = torch.tensor(
-                [[ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i], ROCKET_VELOCITY, initial_objective_direction, initial_objective_distance]], dtype=torch.float32, ).to(device)
+                [[ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i], ROCKET_VELOCITY, initial_objective_direction, initial_objective_distance, False]], dtype=torch.float32, ).to(device)
             test_rocket = torch.tensor(
-                [[ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i], ROCKET_VELOCITY, initial_objective_direction, initial_objective_distance]], dtype=torch.float32, requires_grad=True).to(device)
+                [[ROCKET_POSX[i], ROCKET_POSY[i], ROCKET_ANGLE[i], ROCKET_VELOCITY, initial_objective_direction, initial_objective_distance, False]], dtype=torch.float32, requires_grad=True).to(device)
             # Append train_rocket to train_rockets
             if i == 0:
                 train_rockets = train_rocket
@@ -158,8 +195,14 @@ def main():
         while count < 250:
             # Execute the model
             # output[0] = turn left, output[1] = turn right, output[2] = do nothing
+
+            target = move_target(target, random_target_destination, 1)
+
             outputs = model(rockets)
             for i, output in enumerate(outputs):
+                if rockets[i, 6]:
+
+                    continue
                 if output[0] > output[1] and output[0] > output[2]:
                     new_rockets = add_to_rocket_angle(
                         rockets[i].unsqueeze(0), -3, device)
@@ -172,27 +215,22 @@ def main():
                     rockets[i, 2] = new_rockets[0, 2]
                 elif output[2] > output[0] and output[2] > output[1]:
                     pass
-            # If rockets are out of the canvas, stop the simulation and reset the rocket
-            # new_rockets = rockets.clone()
 
-            # for i, rocket in enumerate(rockets):
-            #     if rocket[0] < 0 or rocket[0] > 501 or rocket[1] < 0 or rocket[1] > 500:
-            #         new_rockets[i, 3] = 0
-            # rockets = new_rockets
-           # If rockets are in the target set velocity to 0
             new_rockets = rockets.clone()
             for i, rocket in enumerate(rockets):
                 if rocket[5] < 5:
-                    new_rockets[i, 3] = 0
+                    # If the rocket is close to the target, give a reward
+                    new_rockets[i, 6] = True
             rockets = new_rockets
             # Calculate the desired direction for each rocket
-            draw_and_watch_rocket(rockets)
+            draw_and_watch_rocket(rockets, target)
             desired_outputs = torch.stack(
                 [calculate_desired_output(rocket, target) for rocket in rockets]).to(device)
             # Calculate the new position
-            rockets = calculate_next_position(rockets, device)
+            rockets = calculate_next_position(rockets, target, device)
             # Calculate the loss
             loss = criterion(outputs, desired_outputs)
+
             # Zero the gradients
             optimizer.zero_grad()
             # Backward pass
@@ -206,6 +244,8 @@ def main():
             # time.sleep(1)
             print(f"Epoch: {epoch}, Loss: {loss.item()}")
         print(f"Epoch: {epoch}, Loss: {loss.item()}")
+        # Save the model
+        torch.save(model.state_dict(), "data/model.pth")
 
 
 main()
