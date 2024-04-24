@@ -147,29 +147,34 @@ def main():
     ROCKET_POSY_RANGE = [390, 410]
     ROCKET_ANGLE_RANGE = [0, 360]
 
-    ROCKET_VELOCITY = 3
+    ROCKET_VELOCITY = 5
 
     TARGET_MOVEMENT_RANGE_X = [50, 400]
-    TARGET_MOVEMENT_RANGE_Y = [100, 400]
-
+    TARGET_MOVEMENT_RANGE_Y = [300, 500]
+    TARGET_SPEED_RANGE = [1, 2]
     TARGET_INITIAL_POSITION = [250, 100]
 
-    TRAIN = False
+    TRAIN = True
 
-    FUEL = 200
+    FUEL = 220
+
+    EPOCHS = 600
+
     # Create target rocket
     initial_target = torch.tensor(
         TARGET_INITIAL_POSITION, dtype=torch.float32).to(device)
     # Create the criterion
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     criterion = torch.nn.CrossEntropyLoss()
-    for epoch in range(70):
+    for epoch in range(EPOCHS):
         count = 0
         target = initial_target.clone()
         random_target_destination = torch.tensor(
             [torch.randint(TARGET_MOVEMENT_RANGE_X[0], TARGET_MOVEMENT_RANGE_X[1], (1,)),
              torch.randint(TARGET_MOVEMENT_RANGE_Y[0], TARGET_MOVEMENT_RANGE_Y[1], (1,))],
             dtype=torch.float32).to(device)
+        random_target_speed = torch.tensor(
+            [torch.randint(TARGET_SPEED_RANGE[0], TARGET_SPEED_RANGE[1], (1,))], dtype=torch.float32).to(device)
         ROCKET_POSX = torch.randint(
             ROCKET_POSX_RANGE[0], ROCKET_POSX_RANGE[1], (ROCKET_NUMBERS,))
         ROCKET_POSY = torch.randint(
@@ -195,11 +200,12 @@ def main():
         rockets = train_rockets.clone()
         # Set rockets position to the initial position
 
-        while count < FUEL:
+        while count < FUEL * 1.2:
             # Execute the model
             # output[0] = turn left, output[1] = turn right, output[2] = do nothing
 
-            target = move_target(target, random_target_destination, 1)
+            target = move_target(
+                target, random_target_destination, random_target_speed)
 
             outputs = model(rockets)
             for i, output in enumerate(outputs):
@@ -208,12 +214,12 @@ def main():
                     continue
                 if output[0] > output[1] and output[0] > output[2]:
                     new_rockets = add_to_rocket_angle(
-                        rockets[i].unsqueeze(0), -3, device)
+                        rockets[i].unsqueeze(0), -4, device)
                     rockets = rockets.clone()
                     rockets[i, 2] = new_rockets[0, 2]
                 elif output[1] > output[0] and output[1] > output[2]:
                     new_rockets = add_to_rocket_angle(
-                        rockets[i].unsqueeze(0), 3, device)
+                        rockets[i].unsqueeze(0), 4, device)
                     rockets = rockets.clone()
                     rockets[i, 2] = new_rockets[0, 2]
                 elif output[2] > output[0] and output[2] > output[1]:
